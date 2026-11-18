@@ -8,6 +8,7 @@
 - Add configurable module roots and category/review rules shared by reports and optional bounded AI excerpts.
 - Document provider setup, migration of published configuration, and provider-specific retention limitations.
 - Enable the fileinfo extension for Windows compatibility CI.
+- Keep checkout line endings consistent for style checks on Windows and Linux.
 - Add the auto-discovered `wtf:happened` Laravel command.
 - Analyze bounded local Git history with application-subtree scope and deterministic Laravel categories.
 - Add human-readable and versioned JSON reports, review suggestions, and Git-only humor.
