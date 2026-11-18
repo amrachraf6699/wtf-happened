@@ -82,7 +82,7 @@ class CommandTest extends TestCase
     public function test_no_ai_overrides_persistent_and_explicit_consent(): void
     {
         $this->history();
-        config(['wtf-happened.ai.enabled' => true, 'wtf-happened.ai.include_diffs' => true]);
+        config(['wtf-happened.ai.enabled' => true, 'wtf-happened.ai.include_diffs' => true, 'wtf-happened.ai.provider' => 'anthropic']);
         [$code, $output] = $this->runCommand(['--json' => true, '--ai' => true, '--no-ai' => true, '--funny' => true]);
         $this->assertSame(0, $code);
         $this->assertSame('disabled', json_decode($output, true)['ai']['status']);
@@ -91,7 +91,7 @@ class CommandTest extends TestCase
 
     public function test_missing_key_falls_back_and_empty_history_skips_ai(): void
     {
-        config(['wtf-happened.ai.api_key' => null]);
+        config(['wtf-happened.ai.api_key' => null, 'wtf-happened.ai.provider_keys.openai' => null]);
         [$code, $output] = $this->runCommand(['--json' => true, '--ai' => true]);
         $this->assertSame(0, $code);
         $this->assertSame('skipped_empty', json_decode($output, true)['ai']['status']);
@@ -138,5 +138,60 @@ class CommandTest extends TestCase
 
             return true;
         });
+    }
+
+    public function test_modular_configuration_is_shared_by_report_and_selected_provider_context(): void
+    {
+        $this->writeFixture('components/Shop/Gateways/Charge.php', '<?php // bounded-source');
+        $this->commit('Update checkout gateway');
+        $before = $this->git(['status', '--porcelain=v1']);
+        config([
+            'wtf-happened.analysis.module_roots' => ['components/*'],
+            'wtf-happened.analysis.category_rules' => [['pattern' => 'components/*/Gateways/**', 'category' => 'Gateways', 'review' => true]],
+            'wtf-happened.ai.provider' => 'anthropic',
+            'wtf-happened.ai.api_key' => null,
+            'wtf-happened.ai.provider_keys.anthropic' => 'anthropic-fixture-key',
+            'wtf-happened.ai.include_diffs' => true,
+        ]);
+        $statement = ['text' => 'Gateway changed.', 'evidence_ids' => ['c1']];
+        $summary = ['summary' => $statement, 'highlights' => [], 'potential_risks' => [$statement], 'suggested_next_step' => $statement, 'funny_comment' => null];
+        Http::fake(['api.anthropic.com/*' => Http::response(['stop_reason' => 'end_turn', 'content' => [['type' => 'text', 'text' => json_encode($summary)]]])]);
+        [$code, $output, $stderr] = $this->runCommand(['--ai' => true, '--json' => true]);
+        $this->assertSame(0, $code, $stderr);
+        $report = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame(['components/Shop' => 1], $report['changes']['modules']);
+        $this->assertSame(['Gateways' => 1], $report['changes']['categories']);
+        $this->assertSame('anthropic', $report['ai']['provider']);
+        $this->assertStringContainsString('Anthropic', $stderr);
+        $this->assertStringNotContainsString('bounded-source', $output);
+        Http::assertSent(fn ($request) => str_contains($request['messages'][0]['content'], 'bounded-source') && str_contains($request['messages'][0]['content'], 'Gateways'));
+        $this->assertSame($before, $this->git(['status', '--porcelain=v1']));
+    }
+
+    public function test_bad_analysis_or_provider_configuration_has_json_exit_two(): void
+    {
+        $this->history();
+        config(['wtf-happened.analysis.category_rules' => [['pattern' => 'app/**']]]);
+        [$code, $output] = $this->runCommand(['--json' => true]);
+        $this->assertSame(2, $code);
+        $this->assertSame('error', json_decode($output, true, 512, JSON_THROW_ON_ERROR)['status']);
+        config(['wtf-happened.analysis.category_rules' => [], 'wtf-happened.ai.provider' => 'unknown']);
+        [$code, $output] = $this->runCommand(['--json' => true, '--ai' => true]);
+        $this->assertSame(2, $code);
+        $report = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('degraded', $report['status']);
+        $this->assertSame(1, $report['statistics']['commits']);
+        Http::assertNothingSent();
+    }
+
+    public function test_partial_configuration_merges_defaults_but_replaces_ordered_lists(): void
+    {
+        config(['wtf-happened' => ['analysis' => ['module_roots' => ['components/*']], 'ai' => ['provider' => 'gemini']]]);
+        (new WtfHappenedServiceProvider($this->app))->register();
+        $this->assertSame(['components/*'], config('wtf-happened.analysis.module_roots'));
+        $this->assertSame([], config('wtf-happened.analysis.category_rules'));
+        $this->assertSame(40000, config('wtf-happened.ai.max_payload_bytes'));
+        $this->assertSame('gemini', config('wtf-happened.ai.provider'));
+        $this->assertSame(false, config('wtf-happened.ai.enabled'));
     }
 }

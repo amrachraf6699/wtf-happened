@@ -10,9 +10,15 @@ class WtfHappenedServiceProvider extends ServiceProvider
     public function register(): void
     {
         $defaults = require __DIR__.'/../config/wtf-happened.php';
-        $this->app['config']->set('wtf-happened', array_replace_recursive(
-            $defaults, $this->app['config']->get('wtf-happened', [])
-        ));
+        $configured = $this->app['config']->get('wtf-happened', []);
+        $merged = array_replace_recursive($defaults, $configured);
+        // Ordered lists replace defaults rather than merging by numeric index.
+        foreach (['module_roots', 'category_rules'] as $key) {
+            if (array_key_exists($key, $configured['analysis'] ?? [])) {
+                $merged['analysis'][$key] = $configured['analysis'][$key];
+            }
+        }
+        $this->app['config']->set('wtf-happened', $merged);
     }
 
     public function boot(): void

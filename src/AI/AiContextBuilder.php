@@ -3,10 +3,13 @@
 namespace AmrAchraf\WtfHappened\AI;
 
 use AmrAchraf\WtfHappened\Analysis\ChangeAnalyzer;
+use AmrAchraf\WtfHappened\Analysis\PathClassifier;
 use AmrAchraf\WtfHappened\Git\GitAnalyzer;
 
 class AiContextBuilder
 {
+    public function __construct(private PathClassifier $classifier = new PathClassifier) {}
+
     public static function clean(string $text): string
     {
         $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
@@ -14,6 +17,7 @@ class AiContextBuilder
         $text = preg_replace('~(https?://)[^\s/@]+:[^\s/@]+@~i', '$1[REDACTED]@', $text);
         $text = preg_replace('/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/i', 'Bearer [REDACTED]', $text);
         $text = preg_replace('/\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{12,}|AKIA[A-Z0-9]{16})\b/', '[REDACTED]', $text);
+        $text = preg_replace('/\b(?:AIza[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{16,}|xai-[A-Za-z0-9_-]{16,})\b/', '[REDACTED]', $text);
         $text = preg_replace('/([\w.-]*(?:password|passwd|secret|token|api[_-]?key|credential)[\w.-]*[\x22\x27]?\s*(?:=>|[:=])\s*)(?:[\x22][^\x22\r\n]*[\x22]|[\x27][^\x27\r\n]*[\x27]|[^\s,;]+)/i', '$1[REDACTED]', $text);
         $text = preg_replace('/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i', '[REDACTED EMAIL]', $text);
         // Strip terminal control sequences, including OSC hyperlinks and CSI escapes.
@@ -41,7 +45,7 @@ class AiContextBuilder
 
     public function allowed(string $path): bool
     {
-        return preg_match('~^(app|routes|database|tests)/.+\.php$~i', $path) === 1
+        return $this->classifier->classify($path)['source'] && str_ends_with(strtolower($path), '.php')
             && preg_match('~(?:^|[/_.-])(?:env|config|credentials?|secrets?|keys?|certificates?|vendor|node_modules|generated|cache)(?:[/_.-]|$)~i', $path) !== 1;
     }
 
@@ -51,7 +55,7 @@ class AiContextBuilder
         $payload = ['statistics' => $analysis['statistics'], 'history_complete' => $evidence['complete'], 'evidence' => []];
         $omitted = false;
         $candidates = [];
-        $analyzer = new ChangeAnalyzer;
+        $analyzer = new ChangeAnalyzer($this->classifier);
         foreach ($evidence['commits'] as $index => $commit) {
             $omitted = $omitted || strlen($commit['subject']) > 1000;
             $id = 'c'.($index + 1);
@@ -69,7 +73,8 @@ class AiContextBuilder
 
                     continue;
                 }
-                $file = self::cleanValue(['path' => $change['path'], 'old_path' => $change['old_path'], 'status' => $change['status'], 'category' => $analyzer->category($change['path'])]);
+                $classification = $this->classifier->classify($change['path']);
+                $file = self::cleanValue(['path' => $change['path'], 'old_path' => $change['old_path'], 'status' => $change['status'], 'category' => $classification['category'], 'module' => $classification['module']]);
                 $payload['evidence'][$slot]['files'][] = $file;
                 if ($this->size($payload) > $config['max_payload_bytes']) {
                     array_pop($payload['evidence'][$slot]['files']);

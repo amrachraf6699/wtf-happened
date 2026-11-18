@@ -4,6 +4,7 @@ namespace AmrAchraf\WtfHappened\Tests\Unit;
 
 use AmrAchraf\WtfHappened\AI\AiContextBuilder;
 use AmrAchraf\WtfHappened\Analysis\ChangeAnalyzer;
+use AmrAchraf\WtfHappened\Analysis\PathClassifier;
 use AmrAchraf\WtfHappened\Git\GitAnalyzer;
 use AmrAchraf\WtfHappened\Tests\GitFixture;
 use PHPUnit\Framework\TestCase;
@@ -30,6 +31,9 @@ class PrivacyTest extends TestCase
             $this->assertStringNotContainsString($secret, $clean);
         }
         $this->assertStringContainsString('red', $clean);
+        foreach (['AIza'.str_repeat('a', 35), 'gsk_'.str_repeat('b', 40), 'xai-'.str_repeat('c', 40), 'sk-ant-'.str_repeat('d', 40)] as $key) {
+            $this->assertSame('[REDACTED]', AiContextBuilder::clean($key));
+        }
     }
 
     public function test_context_excludes_sensitive_files_authors_and_diffs_without_consent(): void
@@ -90,5 +94,33 @@ class PrivacyTest extends TestCase
         }
         $this->assertLessThanOrEqual(3000, $bytes);
         $this->assertTrue($context['omitted']);
+    }
+
+    public function test_modular_excerpts_keep_exclusions_even_with_custom_category_rules(): void
+    {
+        $paths = [
+            'Modules/Shop/app/Http/Controllers/OrderController.php' => 'allowed-module-source',
+            'packages/acme/shop/src/Policies/OrderPolicy.php' => 'allowed-package-source',
+            'Modules/Shop/Config/services.php' => 'private-config-marker',
+            'Modules/Shop/vendor/Dependency.php' => 'private-vendor-marker',
+            'Modules/Shop/app/credentials.php' => 'private-credential-marker',
+        ];
+        foreach ($paths as $path => $marker) {
+            $this->writeFixture($path, '<?php // '.$marker);
+        }
+        $this->commit();
+        $this->git(['mv', 'Modules/Shop/Config/services.php', 'Modules/Shop/app/Public.php']);
+        $this->commit('Move config into application');
+        $classifier = new PathClassifier(PathClassifier::ROOTS, [['pattern' => '**/*.php', 'category' => 'Custom code']]);
+        $git = new GitAnalyzer;
+        $evidence = $git->analyze($this->directory, 7, null);
+        $context = (new AiContextBuilder($classifier))->build($evidence, (new ChangeAnalyzer($classifier))->analyze($evidence), ['include_diffs' => true, 'max_payload_bytes' => 40000, 'max_diff_bytes' => 20000], $git);
+        $json = json_encode($context);
+        $this->assertStringContainsString('allowed-module-source', $json);
+        $this->assertStringContainsString('allowed-package-source', $json);
+        $this->assertStringContainsString('Modules\\/Shop', $json);
+        foreach (['private-config-marker', 'private-vendor-marker', 'private-credential-marker'] as $marker) {
+            $this->assertStringNotContainsString($marker, $json);
+        }
     }
 }

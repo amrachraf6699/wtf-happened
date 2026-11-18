@@ -4,9 +4,11 @@ namespace AmrAchraf\WtfHappened\Analysis;
 
 class ChangeAnalyzer
 {
+    public function __construct(private PathClassifier $classifier = new PathClassifier) {}
+
     public function analyze(array $evidence): array
     {
-        $files = $authors = $categories = $directories = $reviews = $subjects = [];
+        $files = $authors = $categories = $directories = $reviews = $subjects = $modules = [];
         foreach (array_reverse($evidence['commits']) as $commit) {
             if ($commit['author'] !== '') {
                 $authors[$commit['author']] = true;
@@ -22,7 +24,13 @@ class ChangeAnalyzer
         }
         ksort($files);
         foreach ($files as $path => $file) {
-            $category = $this->category($path);
+            $classification = $this->classifier->classify($path);
+            $category = $classification['category'];
+            $files[$path]['category'] = $category;
+            $files[$path]['module'] = $classification['module'];
+            if ($classification['module'] !== null) {
+                $modules[$classification['module']] = ($modules[$classification['module']] ?? 0) + 1;
+            }
             $categories[$category] = ($categories[$category] ?? 0) + 1;
             $directory = str_contains($path, '/') ? explode('/', $path)[0].'/' : './';
             $directories[$directory] = ($directories[$directory] ?? 0) + 1;
@@ -34,34 +42,24 @@ class ChangeAnalyzer
         }
         arsort($directories);
         ksort($categories);
+        arsort($modules);
 
         return [
             'statistics' => ['commits' => count($evidence['commits']), 'files' => count($files), 'contributors' => count($authors)],
-            'changes' => ['files' => array_values($files), 'categories' => $categories, 'directories' => $directories, 'subjects' => array_slice(array_values(array_unique(array_reverse($subjects))), 0, 10)],
+            'changes' => ['files' => array_values($files), 'categories' => $categories, 'modules' => $modules, 'directories' => $directories, 'subjects' => array_slice(array_values(array_unique(array_reverse($subjects))), 0, 10)],
             'review_items' => array_values($reviews),
         ];
     }
 
     public function category(string $path): string
     {
-        foreach ([
-            'app/Http/Controllers/' => 'Controllers', 'app/Http/Middleware/' => 'Middleware',
-            'app/Models/' => 'Models', 'app/Policies/' => 'Policies', 'app/Jobs/' => 'Jobs',
-            'app/Services/' => 'Services', 'routes/' => 'Routes', 'database/migrations/' => 'Migrations',
-            'database/seeders/' => 'Seeders', 'config/' => 'Configuration', 'tests/' => 'Tests',
-        ] as $prefix => $category) {
-            if (str_starts_with($path, $prefix)) {
-                return $category;
-            }
-        }
-
-        return 'Other';
+        return $this->classifier->classify($path)['category'];
     }
 
     public function reviewReason(string $path): ?string
     {
         $category = $this->category($path);
-        if (in_array($category, ['Middleware', 'Policies', 'Routes', 'Migrations', 'Configuration'], true)) {
+        if ($this->classifier->classify($path)['review']) {
             return $category.' changed; worth reviewing.';
         }
         if (preg_match('~(?:^|/)(?:Auth(?:entication|orization)?|Login|Payment|Webhook|Checkout|Billing|Stripe|Paypal)[^/]*\.php$~i', $path)) {

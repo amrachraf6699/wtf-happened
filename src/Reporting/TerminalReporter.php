@@ -40,6 +40,12 @@ class TerminalReporter
         if ($report['changes']['directories']) {
             $line('Main directories: '.implode(', ', array_slice(array_keys($report['changes']['directories']), 0, 3)));
         }
+        if (! empty($report['changes']['modules'])) {
+            $heading('AFFECTED MODULES');
+            foreach (array_slice($report['changes']['modules'], 0, 8, true) as $module => $count) {
+                $line($module.': '.$count.' '.($count === 1 ? 'file' : 'files').' changed');
+            }
+        }
         foreach (array_slice($report['changes']['subjects'], 0, 5) as $subject) {
             $line('Commit: '.$subject);
         }

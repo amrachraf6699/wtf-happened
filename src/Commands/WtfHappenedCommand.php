@@ -3,8 +3,10 @@
 namespace AmrAchraf\WtfHappened\Commands;
 
 use AmrAchraf\WtfHappened\AI\AiContextBuilder;
+use AmrAchraf\WtfHappened\AI\AiProvider;
 use AmrAchraf\WtfHappened\AI\AiSummarizer;
 use AmrAchraf\WtfHappened\Analysis\ChangeAnalyzer;
+use AmrAchraf\WtfHappened\Analysis\PathClassifier;
 use AmrAchraf\WtfHappened\Git\GitAnalyzer;
 use AmrAchraf\WtfHappened\Reporting\TerminalReporter;
 use Illuminate\Console\Command;
@@ -43,12 +45,18 @@ class WtfHappenedCommand extends Command
         }
     }
 
-    public function handle(GitAnalyzer $git, ChangeAnalyzer $analyzer, AiContextBuilder $builder, AiSummarizer $ai, TerminalReporter $reporter): int
+    public function handle(GitAnalyzer $git, AiSummarizer $ai, TerminalReporter $reporter): int
     {
         $report = $this->emptyReport();
         $exit = 0;
         try {
             $config = config('wtf-happened');
+            if (! is_array($config['analysis']['module_roots']) || ! is_array($config['analysis']['category_rules'])) {
+                throw new InvalidArgumentException('analysis.module_roots and analysis.category_rules must be arrays.');
+            }
+            $classifier = new PathClassifier($config['analysis']['module_roots'], $config['analysis']['category_rules']);
+            $analyzer = new ChangeAnalyzer($classifier);
+            $builder = new AiContextBuilder($classifier);
             if ($this->option('days') !== null && $this->option('since') !== null) {
                 throw new InvalidArgumentException('--days and --since are mutually exclusive.');
             }
@@ -69,12 +77,14 @@ class WtfHappenedCommand extends Command
                 $report['ai']['status'] = 'skipped_empty';
             } elseif ($enabled) {
                 try {
+                    $provider = (new AiProvider)->settings($config['ai']);
+                    $report['ai']['provider'] = $provider['name'];
                     $context = $builder->build($evidence, $analysis, $config['ai'], $git);
                     $report['completeness']['ai_context'] = ! $context['omitted'];
                     if ($context['omitted']) {
                         $report['warnings'][] = 'Some AI context was excluded or truncated by privacy and size limits.';
                     }
-                    $this->diagnostic('AI enabled: sending sanitized commit subjects, relative paths and counts to OpenAI'.($config['ai']['include_diffs'] ? ', with bounded committed PHP excerpts' : ', without source excerpts').'. Redaction cannot guarantee removal of all secrets.');
+                    $this->diagnostic('AI enabled: sending sanitized commit subjects, relative paths and counts to '.$provider['label'].' ('.$provider['base'].')'.($config['ai']['include_diffs'] ? ', with bounded committed PHP excerpts' : ', without source excerpts').'. Redaction cannot guarantee removal of all secrets.');
                     $report['ai']['summary'] = $ai->summarize($context, $config['ai'], (bool) $this->option('funny'));
                     $report['ai']['status'] = 'succeeded';
                     foreach ($context['payload']['evidence'] as $entry) {
@@ -84,8 +94,8 @@ class WtfHappenedCommand extends Command
                 } catch (\Throwable $e) {
                     $report['ai']['status'] = 'failed';
                     $report['status'] = 'degraded';
-                    $report['error'] = get_class($e) === \RuntimeException::class ? $e->getMessage() : 'AI analysis failed. Git-only results are available.';
-                    $exit = 1;
+                    $report['error'] = in_array(get_class($e), [\RuntimeException::class, InvalidArgumentException::class], true) ? $e->getMessage() : 'AI analysis failed. Git-only results are available.';
+                    $exit = $e instanceof InvalidArgumentException ? 2 : 1;
                 }
             }
         } catch (InvalidArgumentException $e) {
@@ -121,8 +131,8 @@ class WtfHappenedCommand extends Command
             'schema_version' => 1, 'status' => 'ok', 'range' => null, 'scope' => '.',
             'completeness' => ['history' => true, 'ai_context' => true],
             'statistics' => ['commits' => 0, 'files' => 0, 'contributors' => 0],
-            'changes' => ['files' => [], 'categories' => [], 'directories' => [], 'subjects' => []],
-            'review_items' => [], 'ai' => ['status' => 'disabled', 'summary' => null, 'evidence' => []], 'warnings' => [], 'error' => null,
+            'changes' => ['files' => [], 'categories' => [], 'modules' => [], 'directories' => [], 'subjects' => []],
+            'review_items' => [], 'ai' => ['status' => 'disabled', 'provider' => null, 'summary' => null, 'evidence' => []], 'warnings' => [], 'error' => null,
         ];
     }
 
