@@ -1,0 +1,30 @@
+{
+    "name": "amrachraf6699/wtf-happened",
+    "description": "A Git-first Laravel catch-up command with optional AI summaries.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["laravel", "artisan", "git", "ai", "developer-tools"],
+    "homepage": "https://github.com/amrachraf6699/wtf-happened",
+    "support": {
+        "issues": "https://github.com/amrachraf6699/wtf-happened/issues",
+        "source": "https://github.com/amrachraf6699/wtf-happened"
+    },
+    "require": {
+        "php": "^8.2",
+        "illuminate/console": "^12.0 || ^13.0",
+        "illuminate/support": "^12.0 || ^13.0",
+        "illuminate/http": "^12.0 || ^13.0",
+        "symfony/process": "^7.2 || ^8.0",
+        "guzzlehttp/guzzle": "^7.9 || ^8.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "phpunit/phpunit": "^11.5 || ^12.0",
+        "laravel/pint": "^1.20"
+    },
+    "autoload": {"psr-4": {"AmrAchraf\\WtfHappened\\": "src/"}},
+    "autoload-dev": {"psr-4": {"AmrAchraf\\WtfHappened\\Tests\\": "tests/"}},
+    "extra": {"laravel": {"providers": ["AmrAchraf\\WtfHappened\\WtfHappenedServiceProvider"]}},
+    "scripts": {"test": "phpunit", "lint": "pint --test"},
+    "config": {"sort-packages": true}
+}

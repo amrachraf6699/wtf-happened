@@ -1,0 +1,45 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, php: '8.2', laravel: '12', testbench: '10', dependencies: lowest }
+          - { os: ubuntu-latest, php: '8.3', laravel: '13', testbench: '11', dependencies: highest }
+          - { os: ubuntu-latest, php: '8.5', laravel: '13', testbench: '11', dependencies: highest }
+          - { os: windows-latest, php: '8.3', laravel: '12', testbench: '10', dependencies: highest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, curl, dom, xml, sqlite3, pdo_sqlite
+          coverage: none
+          tools: composer:v2
+      - run: composer validate --strict
+      - name: Resolve compatibility dependencies
+        shell: bash
+        run: |
+          composer require --dev "orchestra/testbench:${{ matrix.testbench }}.*" "laravel/framework:${{ matrix.laravel }}.*" --no-update --no-interaction
+          if [ "${{ matrix.dependencies }}" = lowest ]; then
+            composer update --prefer-lowest --prefer-stable --no-interaction --prefer-dist
+          else
+            composer update --no-interaction --prefer-dist
+          fi
+      - run: composer test
+      - run: composer lint
+      - name: Fresh application discovery and config cache
+        shell: bash
+        run: |
+          composer create-project laravel/laravel build/smoke "${{ matrix.laravel }}.*" --no-interaction --prefer-dist --no-scripts
+          php tests/install-smoke.php build/smoke
+          cd build/smoke
+          composer require --dev 'amrachraf6699/wtf-happened:@dev' --no-interaction
+          php artisan wtf:happened --no-ai --json
+          php artisan config:cache
+          php artisan wtf:happened --no-ai --json
